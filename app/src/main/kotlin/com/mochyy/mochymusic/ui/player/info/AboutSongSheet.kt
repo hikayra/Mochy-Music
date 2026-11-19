@@ -88,6 +88,8 @@ fun AboutSongSheet(
     val (sourceId, setSourceId) = rememberPreference(AboutSongSourceKey, AboutSource.Musixmatch.id)
     val source = AboutSource.entries.firstOrNull { it.id == sourceId } ?: AboutSource.Musixmatch
     var showSources by remember { mutableStateOf(false) }
+    var openNote by remember { mutableStateOf<com.music.genius.GeniusNote?>(null) }
+    var pickingLanguage by remember { mutableStateOf(false) }
     val stack = LocalMenuSheetStack.current ?: rememberMenuSheetStack()
 
     CompositionLocalProvider(LocalMenuSheetStack provides stack) {
@@ -112,6 +114,7 @@ fun AboutSongSheet(
                     }
                     Spacer(Modifier.height(12.dp))
                     AboutCard(about, source, onSwitch = { setSourceId(it.id) })
+                    GeniusSections(song, about.musixmatch?.spotifyId ?: about.genius?.spotifyId, onOpenNote = { openNote = it }, onTranslate = { pickingLanguage = true })
                     if (about.artists.isNotEmpty()) {
                         InfoDivider()
                         InfoSectionTitle(stringResource(R.string.pc_about_by))
@@ -128,6 +131,8 @@ fun AboutSongSheet(
             }
         }
 
+        openNote?.let { GeniusNoteSheet(it, onTranslate = { pickingLanguage = true }, onDismiss = { openNote = null }) }
+        GeniusLanguagePicker(pickingLanguage) { pickingLanguage = false }
         if (showSources) {
             AboutSourceSheet(
                 selected = source,
@@ -140,7 +145,7 @@ fun AboutSongSheet(
 }
 
 @Composable
-private fun GeneralInformation(about: SongAbout) {
+internal fun GeneralInformation(about: SongAbout) {
     InfoSectionTitle(stringResource(R.string.pc_about_general))
     Spacer(Modifier.height(8.dp))
     // a fact still on its way gets a placeholder; one nobody had is left out rather than shown as "-"
@@ -171,7 +176,7 @@ private fun LoadingBullet(label: String) {
 }
 
 @Composable
-private fun SourceChip(source: AboutSource, onClick: () -> Unit) {
+internal fun SourceChip(source: AboutSource, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -194,7 +199,7 @@ private fun SourceChip(source: AboutSource, onClick: () -> Unit) {
 
 /** the text of the picked source, or a placeholder while it loads, or a nudge to the other one */
 @Composable
-private fun AboutCard(about: SongAbout, source: AboutSource, onSwitch: (AboutSource) -> Unit) {
+internal fun AboutCard(about: SongAbout, source: AboutSource, onSwitch: (AboutSource) -> Unit) {
     val uriHandler = LocalUriHandler.current
     val text = textFor(about, source)
     val done = doneFor(about, source)
@@ -287,7 +292,7 @@ private fun pageFor(about: SongAbout, source: AboutSource): String? = when (sour
 }
 
 @Composable
-private fun ArtistRow(artists: List<AboutArtist>, onOpenArtist: (String) -> Unit) = BoxWithConstraints(Modifier.fillMaxWidth()) {
+internal fun ArtistRow(artists: List<AboutArtist>, onOpenArtist: (String) -> Unit) = BoxWithConstraints(Modifier.fillMaxWidth()) {
     // about three across on a phone, a little bigger on a tablet, never so big a name has no room
     val circle = ((maxWidth - ArtistGap * 2) / 2.9f).coerceIn(80.dp, 128.dp)
     Row(
@@ -340,7 +345,7 @@ private fun ArtistRow(artists: List<AboutArtist>, onOpenArtist: (String) -> Unit
 }
 
 @Composable
-private fun StoreRow(links: List<StoreLink>) = BoxWithConstraints(Modifier.fillMaxWidth()) {
+internal fun StoreRow(links: List<StoreLink>) = BoxWithConstraints(Modifier.fillMaxWidth()) {
     val uriHandler = LocalUriHandler.current
     // three and a bit showing, like the mock, so it's plain the row scrolls to the rest
     val tile = ((maxWidth - StoreGap * 3) / 3.4f).coerceIn(72.dp, 120.dp)

@@ -495,6 +495,19 @@ fun YouTubeSongMenu(
                             }
                         )
                     )
+                    add(
+                        Material3MenuItemData(
+                            title = { Text(text = stringResource(R.string.ps_details_about_song)) },
+                            description = { Text(text = "Story, lyrics with notes, album and plays") },
+                            icon = { Icon(painter = painterResource(R.drawable.lyrics), contentDescription = null) },
+                            onClick = {
+                                onDismiss()
+                                com.mochyy.mochymusic.ui.player.info.showAboutSong(bottomSheetPageState, song.toMediaMetadata()) { artistId ->
+                                    navController.navigate("artist/$artistId")
+                                }
+                            }
+                        )
+                    )
                 }
             )
         }

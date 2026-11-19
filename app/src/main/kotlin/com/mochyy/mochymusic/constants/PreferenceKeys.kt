@@ -1392,3 +1392,6 @@ val DonateOpenPromptAtKey = longPreferencesKey("donateOpenPromptAt")
 // one-off lyrics cache clears (App.kt). raise LyricsCacheWipeGeneration to clear it again in a later release
 val LyricsCacheWipeKey = intPreferencesKey("lyricsCacheWipe")
 const val LyricsCacheWipeGeneration = 1
+
+// genius soz ve notlarinda ceviri orijinalin altina mi yazilsin (true) yoksa yerine mi gecsin (false)
+val GeniusTranslationBelowKey = booleanPreferencesKey("geniusTranslationBelow")

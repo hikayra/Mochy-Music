@@ -118,6 +118,7 @@ private fun generalItems(): List<SettingsItem> {
     }
     return listOf(
         languageItem(),
+        geniusTranslationItem(),
         switchItem(
             key = "Disable App Updates notice",
             title = stringResource(R.string.settings_updates_notice),
@@ -284,3 +285,17 @@ private fun relatedItems(navController: NavController): List<SettingsItem> = lis
         onClick = { navController.navigate(NowPlayingSettingsRoute) },
     ),
 )
+
+// genius soz ve notlarini cevirirken ceviri orijinalin altina yazilir ya da yerine gecer
+@Composable
+private fun geniusTranslationItem(): SettingsItem {
+    val (below, setBelow) = rememberPreference(com.mochyy.mochymusic.constants.GeniusTranslationBelowKey, defaultValue = true)
+    return switchItem(
+        key = "Genius translation below original",
+        title = "Keep original when translating lyrics and notes",
+        description = if (below) "The translation is written under each lyric line and note" else "The translation replaces the lyric line and note",
+        icon = painterResource(R.drawable.translate),
+        checked = below,
+        onCheckedChange = setBelow,
+    )
+}

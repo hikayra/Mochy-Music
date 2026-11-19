@@ -37,11 +37,11 @@ data class GeniusSong(
 
 // genius's own website api, the one its pages call: search and song details answer without a key
 object Genius {
-    private const val Api = "https://genius.com/api"
+    internal const val Api = "https://genius.com/api"
     private const val UserAgent = "Mochy (https://github.com/realidkroo/Mochy-Music)"
-    private const val Tag = "Genius"
+    internal const val Tag = "Genius"
     // a title match (80 or 40) plus the artist (40): anything less is a different song
-    private const val GoodMatch = 60
+    internal const val GoodMatch = 60
 
     private sealed interface Lookup {
         data class Found(val song: GeniusSong) : Lookup
@@ -89,7 +89,7 @@ object Genius {
     }
 
     // titles come as "フィナーレ。(finale.)": either half may be the one the player knows
-    private fun score(result: JsonObject, title: String, artist: String): Int {
+    internal fun score(result: JsonObject, title: String, artist: String): Int {
         val artistName = result.obj("primary_artist")?.string("name").orEmpty()
         // genius files translations and romanizations under its own "genius english translations" and friends
         if (artistName.startsWith("Genius ")) return 0
@@ -133,7 +133,7 @@ object Genius {
         )
     }
 
-    private fun get(url: String): JsonObject? {
+    internal fun get(url: String): JsonObject? {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", UserAgent)
@@ -148,10 +148,10 @@ object Genius {
         }
     }
 
-    private fun normalize(text: String): String = text.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+    internal fun normalize(text: String): String = text.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
 
-    private fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
+    internal fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
 
-    private fun JsonObject.string(key: String): String? =
+    internal fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
 }

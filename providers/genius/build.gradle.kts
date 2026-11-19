@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.serialization.json)
     implementation(libs.timber)
+    implementation(libs.jsoup)
     testImplementation(libs.junit)
 
     coreLibraryDesugaring(libs.desugaring)
