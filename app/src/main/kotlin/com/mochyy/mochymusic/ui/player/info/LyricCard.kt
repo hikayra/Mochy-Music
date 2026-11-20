@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -33,6 +34,7 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
+import android.view.TextureView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -109,11 +111,17 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.ExoPlayer
 import coil3.compose.AsyncImage
 import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.models.MediaMetadata
+import com.mochyy.mochymusic.ui.player.canvasMimeType
 import com.mochyy.mochymusic.ui.player.menu.MenuRowSurface
 import com.mochyy.mochymusic.ui.theme.InterFontFamily
 import com.mochyy.mochymusic.ui.utils.resize
@@ -130,8 +138,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// lyric card: pick lines and get a card like the ones genius makes
+// lyric card: pick lines and get a card in the genius spirit
 // eight looks all from the same renderer so preview and export match
+// the fonts ship inside the app (assets/cardfonts) so the text looks the same on every phone
 // background comes from inside the app (cover loops artist photos colours) no file picking
 
 internal data class CardStyle(
@@ -147,7 +156,7 @@ internal data class CardStyle(
     val center: Boolean = false,
     // 0 top 1 middle 2 bottom
     val vAlign: Int = 1,
-    // 0 sans 1 serif 2 mono 3 condensed
+    // 0 heavy grotesk 1 serif display 2 mono 3 tall condensed 4 bebas display
     val font: Int = 0,
     val marker: Boolean = false,
     // 0 white 1 the covers accent 2 genius yellow
@@ -155,32 +164,47 @@ internal data class CardStyle(
     val panel: Boolean = false,
     // 0 nothing 1 sharp cover card 2 vinyl 3 header row with cover and names
     val coverMode: Int = 0,
-    // 0 on the picture 1 paper 2 flat accent colour
+    // 0 on the picture 1 paper 2 flat accent colour 3 near black with an accent glow
     val theme: Int = 0,
     val glow: Boolean = false,
     val upper: Boolean = false,
     val quote: Boolean = false,
     val footer: Boolean = true,
     val watermark: Boolean = true,
+    // 0 plain ink 1 the covers accent
+    val tint: Int = 0,
+    // letter spacing in em
+    val track: Float = 0f,
+    // a short accent bar above the lyrics
+    val rule: Boolean = false,
+    // a small spaced out song line at the very top
+    val tag: Boolean = false,
 ) {
     private fun f(x: Float) = String.format(Locale.US, "%.2f", x)
 
     fun describe() = "preset=$name ratio=${f(ratio)} blur=${f(blur)} dim=${f(dim)} saturation=${f(saturation)} zoom=${f(zoom)} " +
         "vignette=${f(vignette)} scrim=${f(scrim)} textScale=${f(textScale)} center=$center vAlign=$vAlign font=$font " +
         "marker=$marker markerColor=$markerColor panel=$panel coverMode=$coverMode theme=$theme glow=$glow upper=$upper " +
-        "quote=$quote footer=$footer watermark=$watermark"
+        "quote=$quote footer=$footer watermark=$watermark tint=$tint track=${f(track)} rule=$rule tag=$tag"
 }
 
 internal val CardPresets = listOf(
-    // the yellow highlighter on a dark cover with the song up top how genius does it
-    CardStyle(name = "Genius", blur = 0.55f, dim = 0.5f, saturation = 1.1f, vignette = 0.35f, coverMode = 3, marker = true, markerColor = 2, footer = false, textScale = 0.95f),
-    CardStyle(name = "Poster", blur = 1f, dim = 0.35f, saturation = 1.2f, vignette = 0.2f, coverMode = 1, center = true, vAlign = 2, textScale = 0.72f),
-    CardStyle(name = "Frosted", blur = 0.9f, dim = 0.22f, saturation = 1.3f, vignette = 0f, center = true, panel = true, textScale = 0.9f),
-    CardStyle(name = "Vinyl", blur = 1f, dim = 0.5f, saturation = 1.2f, vignette = 0.25f, coverMode = 2, center = true, vAlign = 2, textScale = 0.7f, font = 1),
-    CardStyle(name = "Neon", blur = 1f, dim = 0.6f, saturation = 1.7f, vignette = 0.1f, center = true, glow = true, upper = true, font = 3, textScale = 1.05f),
-    CardStyle(name = "Paper", theme = 1, quote = true, font = 1, vignette = 0f, dim = 0f, textScale = 0.9f),
-    CardStyle(name = "Accent", theme = 2, upper = true, font = 3, vignette = 0f, dim = 0f, textScale = 1.1f),
-    CardStyle(name = "Cinema", blur = 0f, dim = 0.12f, vignette = 0.45f, scrim = 0.85f, vAlign = 2, textScale = 0.8f),
+    // the genius look: cover soft and dark behind heavy white lines with the song at the foot
+    CardStyle(name = "Genius", blur = 0.5f, dim = 0.42f, saturation = 1.1f, vignette = 0.3f, scrim = 0.55f, font = 0, textScale = 0.92f, track = -0.01f),
+    // big tall caps pinned to the bottom with a small song line on top
+    CardStyle(name = "Editorial", blur = 0.15f, dim = 0.2f, saturation = 1.05f, vignette = 0.2f, scrim = 0.92f, vAlign = 2, font = 3, upper = true, textScale = 1.15f, tag = true, footer = false),
+    // frosted glass slab with the cover on top
+    CardStyle(name = "Glass", blur = 1f, dim = 0.3f, saturation = 1.35f, vignette = 0f, center = true, panel = true, coverMode = 1, font = 0, textScale = 0.8f, footer = false),
+    // the cover as a sleeve and a serif under it
+    CardStyle(name = "Sleeve", blur = 1f, dim = 0.5f, saturation = 1.25f, vignette = 0.25f, coverMode = 1, center = true, vAlign = 2, font = 1, textScale = 0.78f),
+    // near black with accent coloured display type
+    CardStyle(name = "Midnight", theme = 3, tint = 1, font = 4, upper = true, textScale = 1.25f, rule = true, track = 0.02f),
+    // warm paper and a serif
+    CardStyle(name = "Paper", theme = 1, quote = true, font = 1, textScale = 0.9f),
+    // flat accent colour and huge condensed caps
+    CardStyle(name = "Poster", theme = 2, upper = true, font = 3, textScale = 1.2f, footer = true),
+    // typewriter lines on black with a song line up top
+    CardStyle(name = "Mono", theme = 3, font = 2, tag = true, textScale = 0.72f, rule = false, footer = false),
 )
 
 // accent is the loudest colour of the cover and solid is a colour picked as the whole background
@@ -195,19 +219,54 @@ internal class CardContent(
 
 // everything on the card that doesnt move: shade and text and footer the glass panel is cut out of it later
 // bgcolor is set when the card paints its own flat background and then the picture isnt used at all
-internal class CardOverlay(val bitmap: Bitmap, val panel: RectF?, val panelRadius: Float, val bgColor: Int?)
+// glowcolor is a soft light in the corner of the dark theme
+internal class CardOverlay(
+    val bitmap: Bitmap,
+    val panel: RectF?,
+    val panelRadius: Float,
+    val bgColor: Int?,
+    val glowColor: Int? = null,
+)
+
+// the card fonts live in assets/cardfonts and fall back to the system font when a file is missing
+internal object CardFonts {
+    private var assets: AssetManager? = null
+    private val cache = HashMap<Int, Typeface>()
+    private val files = listOf(
+        "ArchivoBlack-Regular.ttf",
+        "DMSerifDisplay-Regular.ttf",
+        "SpaceMono-Bold.ttf",
+        "Anton-Regular.ttf",
+        "BebasNeue-Regular.ttf",
+    )
+
+    fun init(context: Context) {
+        if (assets == null) assets = context.applicationContext.assets
+    }
+
+    fun face(id: Int): Typeface = synchronized(cache) {
+        cache.getOrPut(id) {
+            val file = files.getOrNull(id)
+            val loaded = file?.let { runCatching { Typeface.createFromAsset(assets, "cardfonts/$it") }.getOrNull() }
+            loaded ?: Typeface.create("sans-serif", Typeface.BOLD)
+        }
+    }
+
+    // line height per font because the tall ones want to sit tight
+    fun leading(id: Int): Float = when (id) {
+        0 -> 1.06f
+        1 -> 1.14f
+        2 -> 1.32f
+        3 -> 1.0f
+        4 -> 0.98f
+        else -> 1.1f
+    }
+}
 
 // ---- the renderer ----
 
 internal object CardRender {
     fun size(s: CardStyle, width: Int): Pair<Int, Int> = (width and 1.inv()) to ((width / s.ratio).toInt() and 1.inv())
-
-    private fun faceOf(font: Int): Typeface = when (font) {
-        1 -> Typeface.create(Typeface.SERIF, Typeface.BOLD)
-        2 -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        3 -> Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        else -> Typeface.create("sans-serif", Typeface.BOLD)
-    }
 
     private fun luma(c: Int) = (AColor.red(c) * 0.299 + AColor.green(c) * 0.587 + AColor.blue(c) * 0.114) / 255.0
 
@@ -235,6 +294,7 @@ internal object CardRender {
     fun backgroundOf(s: CardStyle, c: CardContent): Int? = when {
         s.theme == 1 -> 0xFFF3ECDD.toInt()
         s.theme == 2 -> c.accent
+        s.theme == 3 -> 0xFF0D0D0F.toInt()
         else -> c.solid
     }
 
@@ -250,6 +310,12 @@ internal object CardRender {
         val ink = if (light) 0xFF15140F.toInt() else AColor.WHITE
         val soft = withAlpha(ink, if (light) 150 else 175)
         val onPicture = bg == null
+        // the colour the lyrics are written in
+        val voice = when {
+            s.marker -> AColor.BLACK
+            s.tint == 1 && !light -> c.accent
+            else -> ink
+        }
 
         if (!light && s.vignette > 0f) {
             p.shader = RadialGradient(
@@ -260,7 +326,7 @@ internal object CardRender {
             p.shader = null
         }
         if (!light && s.scrim > 0f) {
-            p.shader = LinearGradient(0f, h * 0.3f, 0f, h.toFloat(), 0, AColor.argb((s.scrim * 235).toInt(), 0, 0, 0), Shader.TileMode.CLAMP)
+            p.shader = LinearGradient(0f, h * 0.25f, 0f, h.toFloat(), 0, AColor.argb((s.scrim * 235).toInt(), 0, 0, 0), Shader.TileMode.CLAMP)
             cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), p)
             p.shader = null
         }
@@ -269,6 +335,15 @@ internal object CardRender {
         val footerH = if (s.footer) thumb else if (s.watermark) 3f * u else 0f
         val bottom = h - pad - footerH - (if (footerH > 0f) 4f * u else 0f)
         var top = pad
+
+        // small spaced out song line at the very top
+        if (s.tag) {
+            val t = text(u, 2.8f, Typeface.create("sans-serif-medium", Typeface.BOLD), if (light) soft else withAlpha(ink, 205), false)
+            t.letterSpacing = 0.14f
+            val label = "${c.title}  ·  ${c.artist}".uppercase()
+            cv.drawText(TextUtils.ellipsize(label, t, w - 2 * pad, TextUtils.TruncateAt.END).toString(), pad, top + 3f * u, t)
+            top += 9f * u
+        }
 
         // header row: small cover and the song and the artist the way genius opens its cards
         if (s.coverMode == 3) {
@@ -291,7 +366,7 @@ internal object CardRender {
             val left = (w - sz) / 2f
             val r = RectF(left, top + 2f * u, left + sz, top + 2f * u + sz)
             p.color = AColor.BLACK
-            p.setShadowLayer(4f * u, 0f, 2f * u, AColor.argb(120, 0, 0, 0))
+            p.setShadowLayer(5f * u, 0f, 2.4f * u, AColor.argb(130, 0, 0, 0))
             cv.drawRoundRect(r, 3f * u, 3f * u, p)
             p.clearShadowLayer()
             drawCover(cv, c.cover, r, 3f * u)
@@ -330,8 +405,16 @@ internal object CardRender {
             top = cy + d / 2f + 6f * u
         }
 
+        // short accent bar above the lyrics
+        if (s.rule) {
+            p.color = c.accent
+            val x = if (s.center) (w - 12f * u) / 2f else pad
+            cv.drawRoundRect(RectF(x, top, x + 12f * u, top + 1.1f * u), 0.55f * u, 0.55f * u, p)
+            top += 6f * u
+        }
+
         if (s.quote) {
-            val q = text(u, 26f, Typeface.create(Typeface.SERIF, Typeface.BOLD), if (light) withAlpha(ink, 90) else c.accent, false)
+            val q = text(u, 26f, CardFonts.face(1), if (light) withAlpha(ink, 90) else c.accent, false)
             if (s.center) q.textAlign = Paint.Align.CENTER
             cv.drawText("“", if (s.center) w / 2f else pad, top + 17f * u, q)
             top += 12f * u
@@ -344,22 +427,25 @@ internal object CardRender {
         val availW = (w - 2 * pad - 2 * boxPad - 2 * markerPad).toInt().coerceAtLeast(10)
         val regionH = (bottom - top - 2 * boxPad).coerceAtLeast(10f)
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = faceOf(s.font)
-            color = if (s.marker) AColor.BLACK else ink
+            typeface = CardFonts.face(s.font)
+            color = voice
+            letterSpacing = s.track
             when {
                 s.glow -> setShadowLayer(u * 3.6f, 0f, 0f, c.accent)
                 onPicture && !s.marker -> setShadowLayer(u * 1.2f, 0f, u * 0.4f, AColor.argb(110, 0, 0, 0))
             }
         }
+        val leading = CardFonts.leading(s.font) + if (s.marker) 0.14f else 0f
         fun build(sz: Float): StaticLayout {
             tp.textSize = sz
             return StaticLayout.Builder.obtain(body, 0, body.length, tp, availW)
                 .setAlignment(if (s.center) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL)
-                .setLineSpacing(0f, if (s.marker) 1.22f else if (s.font == 3) 1.04f else 1.12f)
+                .setLineSpacing(0f, leading)
                 .setIncludePad(false)
                 .build()
         }
-        var size = w * 0.085f * s.textScale
+        // the tall fonts are narrow so they start bigger
+        var size = w * 0.085f * s.textScale * (if (s.font >= 3) 1.3f else 1f)
         var layout = build(size)
         while (layout.height > regionH && size > w * 0.028f) {
             size *= 0.93f
@@ -424,7 +510,7 @@ internal object CardRender {
             wm.textAlign = Paint.Align.RIGHT
             cv.drawText("mochy music", w - pad, h - pad - (if (s.footer) thumb * 0.12f else 0f), wm)
         }
-        return CardOverlay(bmp, panel, panelRadius, bg)
+        return CardOverlay(bmp, panel, panelRadius, bg, if (s.theme == 3) c.accent else null)
     }
 
     // a soft blur from shrinking the picture and growing it back in steps
@@ -466,6 +552,13 @@ internal object CardRender {
             val deep = if (s.theme == 1) flat else AColor.rgb((AColor.red(flat) * 0.6f).toInt(), (AColor.green(flat) * 0.6f).toInt(), (AColor.blue(flat) * 0.6f).toInt())
             val g = Paint().apply { shader = LinearGradient(0f, 0f, w * 0.45f, h.toFloat(), flat, deep, Shader.TileMode.CLAMP) }
             cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), g)
+            // the dark theme gets a soft light of the accent in its top corner
+            ov.glowColor?.let { gc ->
+                val gp = Paint().apply {
+                    shader = RadialGradient(w * 0.95f, h * 0.02f, maxOf(w, h) * 0.85f, AColor.argb(95, AColor.red(gc), AColor.green(gc), AColor.blue(gc)), 0, Shader.TileMode.CLAMP)
+                }
+                cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), gp)
+            }
         } else if (raw == null) {
             val g = Paint().apply { shader = LinearGradient(0f, 0f, w.toFloat(), h.toFloat(), 0xFF2A2A30.toInt(), 0xFF0B0B0C.toInt(), Shader.TileMode.CLAMP) }
             cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), g)
@@ -908,13 +1001,40 @@ private fun Backdrop.tile(): String = when (this) {
     is Backdrop.Motion -> source.substringBefore(" ·")
 }
 
+// a small muted loop that really plays inside the tile
+// the video is stretched by the texture view so it is scaled back to its own shape and the tile crops it
+@Composable
+private fun LoopPreview(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val view = remember { TextureView(context) }
+    DisposableEffect(url) {
+        val player = ExoPlayer.Builder(context).build()
+        player.volume = 0f
+        player.repeatMode = Player.REPEAT_MODE_ONE
+        player.setVideoTextureView(view)
+        player.addListener(object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width <= 0 || videoSize.height <= 0) return
+                val aspect = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+                view.scaleX = if (aspect >= 1f) aspect else 1f
+                view.scaleY = if (aspect >= 1f) 1f else 1f / aspect
+            }
+        })
+        player.setMediaItem(MediaItem.Builder().setUri(url).setMimeType(canvasMimeType(url)).build())
+        player.prepare()
+        player.playWhenReady = true
+        onDispose { player.release() }
+    }
+    AndroidView(factory = { view }, modifier = modifier)
+}
+
 @Composable
 private fun BackdropTile(item: Backdrop, selected: Boolean, coverUrl: String?, onClick: () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(84.dp)) {
         Box(
             Modifier
-                .size(76.dp)
+                .size(84.dp)
                 .clip(shape)
                 .background(MenuRowSurface)
                 .border(if (selected) 2.dp else 1.dp, Color.White.copy(alpha = if (selected) 0.95f else 0.14f), shape)
@@ -927,12 +1047,19 @@ private fun BackdropTile(item: Backdrop, selected: Boolean, coverUrl: String?, o
                 )
                 is Backdrop.Photo -> AsyncImage(model = item.thumb, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 is Backdrop.Motion -> {
+                    // the poster shows until the first video frame arrives
                     AsyncImage(model = item.poster ?: coverUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    LoopPreview(item.url, Modifier.fillMaxSize())
                     Box(
                         contentAlignment = Alignment.Center,
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp).size(20.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(5.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                     ) {
-                        Icon(painterResource(R.drawable.play), contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                        Text("LOOP", color = Color.White, style = inter(8.sp, FontWeight.Bold))
                     }
                 }
             }
@@ -948,10 +1075,19 @@ private fun BackdropTile(item: Backdrop, selected: Boolean, coverUrl: String?, o
     }
 }
 
+// the card stays on the song it was opened for even when the player moves on to the next one
 @Composable
 internal fun LyricCardEditor(song: MediaMetadata, lines: List<String>, onDismiss: () -> Unit) {
+    val pinnedSong = remember { song }
+    val pinnedLines = remember { lines }
+    CardEditorBody(pinnedSong, pinnedLines, onDismiss)
+}
+
+@Composable
+private fun CardEditorBody(song: MediaMetadata, lines: List<String>, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    CardFonts.init(context)
     val artist = remember(song.id) { song.artists.joinToString(", ") { it.name } }
 
     var style by remember { mutableStateOf(CardPresets[0]) }
@@ -1244,17 +1380,23 @@ internal fun LyricCardEditor(song: MediaMetadata, lines: List<String>, onDismiss
                             InfoPill(text = "Bottom", filled = style.vAlign == 2, onClick = { style = style.copy(vAlign = 2) })
                         }
                         ChipRow {
-                            listOf("Sans", "Serif", "Mono", "Condensed").forEachIndexed { i, name ->
+                            listOf("Heavy", "Serif", "Mono", "Tall", "Display").forEachIndexed { i, name ->
                                 InfoPill(text = name, filled = style.font == i, onClick = { style = style.copy(font = i) })
                             }
                         }
                         CardSlider("Size", style.textScale, 0.5f..1.6f, "${(style.textScale * 100).toInt()}") { style = style.copy(textScale = it) }
+                        CardSlider("Spacing", style.track, -0.04f..0.2f, "${(style.track * 100).toInt()}") { style = style.copy(track = it) }
                         ChipRow {
                             InfoPill(text = "Marker", filled = style.marker, onClick = { style = style.copy(marker = !style.marker) })
                             InfoPill(text = "Glow", filled = style.glow, onClick = { style = style.copy(glow = !style.glow) })
                             InfoPill(text = "Caps", filled = style.upper, onClick = { style = style.copy(upper = !style.upper) })
                             InfoPill(text = "Quote mark", filled = style.quote, onClick = { style = style.copy(quote = !style.quote) })
                             InfoPill(text = "Glass", filled = style.panel, onClick = { style = style.copy(panel = !style.panel) })
+                        }
+                        ChipRow {
+                            InfoPill(text = "Accent text", filled = style.tint == 1, onClick = { style = style.copy(tint = if (style.tint == 1) 0 else 1) })
+                            InfoPill(text = "Top line", filled = style.tag, onClick = { style = style.copy(tag = !style.tag) })
+                            InfoPill(text = "Accent bar", filled = style.rule, onClick = { style = style.copy(rule = !style.rule) })
                         }
                         if (style.marker) {
                             ChipRow {
