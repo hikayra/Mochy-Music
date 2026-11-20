@@ -442,7 +442,8 @@ data class SkinPage(
     val header: Boolean = true,
 ) {
     /** a card asks for frosted glass, so the page's background is captured for it */
-    val frosted: Boolean get() = blocks.any { it is PageBlock.Card && it.glass != null }
+    // a card behind a when still counts so it is looked through
+    val frosted: Boolean get() = blocks.any { (it.unwrap() as? PageBlock.Card)?.glass != null }
 }
 
 /** what a page draws behind its blocks: colours, a picture, or the module's own shader */
@@ -475,7 +476,15 @@ sealed interface PageBlock {
     /** the module's own agsl in a box that answers touch, [fallback] colour where shaders can't run */
     data class Shader(val program: SkinShaderSource, val height: Dp, val corner: Dp, val fallback: SkinColor?) : PageBlock
     /** the picture of what the page took over: the playlist's, the album's, the artist's */
-    data class Cover(val height: Dp, val corner: Dp, val circle: Boolean) : PageBlock
+    data class Cover(val height: Dp, val corner: Dp, val circle: Boolean, val source: PageCoverSource = PageCoverSource.Cover) : PageBlock
+    // any block can carry a when so it only shows while a module setting says so
+    data class When(val condition: SkinCondition, val block: PageBlock) : PageBlock
+    // blocks side by side sharing the width evenly
+    data class Row(val blocks: List<PageBlock>, val gap: Dp) : PageBlock
+    // a scrolling row of albums or artists or one shelf picked by its title from what the page took over
+    data class Shelf(val title: String?, val kind: PageItemKind?, val limit: Int, val corner: Dp, val circle: Boolean, val size: Dp) : PageBlock
+    // the long text of what the page took over like an artist bio that opens on a tap
+    data class Bio(val lines: Int) : PageBlock
     /** the songs of what the page took over, each one played from there with the rest after it */
     data class Songs(val limit: Int, val numbers: Boolean, val covers: Boolean, val corner: Dp) : PageBlock
     /** a button that does something here: play or shuffle what the page took over, mochy's own page, or the player's editor bits */
@@ -487,7 +496,17 @@ sealed interface PageBlock {
 }
 
 /** what a page's control button does */
-enum class PageControl { Play, Shuffle, Original, UsePlayer }
+// follow and like and radio and share only show on pages that have something to act on like the artist page
+enum class PageControl { Play, Shuffle, Original, UsePlayer, Follow, Like, Radio, Share }
+
+// which picture of the thing a cover block draws: its own photo or the wide banner or the name logo
+enum class PageCoverSource { Cover, Banner, Logo }
+
+// what kind of thing a shelf item is so a tap knows where to go
+enum class PageItemKind { Song, Album, Artist, Playlist }
+
+// the block itself when it sits behind a when
+fun PageBlock.unwrap(): PageBlock = if (this is PageBlock.When) block.unwrap() else this
 
 // ---- the player's menu ------------------------------------------------------------------------
 

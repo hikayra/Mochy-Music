@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -148,6 +149,11 @@ internal class PageContext(
 @Composable
 private fun PageBlocks(blocks: List<PageBlock>, page: PageContext, glass: GlassState?) {
     blocks.forEach { block ->
+        // a block with a when shows only while its setting says so and then draws like any other
+        if (block is PageBlock.When) {
+            if (block.condition.holdsFor(page.entry.values)) PageBlocks(listOf(block.block), page, glass)
+            return@forEach
+        }
         when (block) {
             // the module's own setting, changed right here the same way as on its page
             is PageBlock.Setting -> {
@@ -158,10 +164,21 @@ private fun PageBlocks(blocks: List<PageBlock>, page: PageContext, glass: GlassS
             }
             is PageBlock.Card -> PageCardBlock(block, glass, page.entry.values) { PageBlocks(block.blocks, page, glass = null) }
             is PageBlock.Shader -> PageShaderBlock(block, page.skin, page.entry.values)
-            is PageBlock.Cover, is PageBlock.Songs, is PageBlock.Control, is PageBlock.Player, PageBlock.Styles -> PageLiveBlock(block, page)
+            is PageBlock.Row -> PageRowBlock(block, page)
+            is PageBlock.Cover, is PageBlock.Songs, is PageBlock.Control, is PageBlock.Player, PageBlock.Styles, is PageBlock.Shelf, is PageBlock.Bio -> PageLiveBlock(block, page)
             else -> PageBlockView(block, page)
         }
         Spacer(Modifier.height(10.dp))
+    }
+}
+
+// blocks side by side that share the width evenly and each draw like they would on their own
+@Composable
+private fun PageRowBlock(block: PageBlock.Row, page: PageContext) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(block.gap)) {
+        block.blocks.forEach { inner ->
+            Box(Modifier.weight(1f)) { PageBlocks(listOf(inner), page, glass = null) }
+        }
     }
 }
 
@@ -301,6 +318,7 @@ private fun PageBlockView(block: PageBlock, page: PageContext) {
         }
         // drawn by the page itself, which knows the module's values, its background and what it took over
         is PageBlock.Setting, is PageBlock.Card, is PageBlock.Shader, is PageBlock.Cover, is PageBlock.Songs, is PageBlock.Control, is PageBlock.Player, PageBlock.Styles -> Unit
+        is PageBlock.When, is PageBlock.Row, is PageBlock.Shelf, is PageBlock.Bio -> Unit
     }
 }
 

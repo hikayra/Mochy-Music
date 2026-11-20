@@ -1951,7 +1951,9 @@ half4 main(float2 p) {
 <tr><td><code>divider</code></td><td>a thin line</td><td></td></tr>
 <tr><td><code>space</code></td><td>empty space</td><td><code>size</code> 0–120 (16)</td></tr>
 <tr><td><code>player</code>, <code>styles</code>, <code>use</code></td><td>your player, its sub-styles, and a button to use it, for an <a href="#modules-player-editor">editor page</a></td><td></td></tr>
-<tr><td><code>cover</code>, <code>songs</code>, <code>play</code>, <code>shuffle</code>, <code>original</code></td><td>what a page <a href="#modules-takeover">took over</a></td><td></td></tr>
+<tr><td><code>cover</code>, <code>songs</code>, <code>albums</code>, <code>artists</code>, <code>shelf</code>, <code>bio</code>, <code>play</code>, <code>shuffle</code>, <code>follow</code>, <code>like</code>, <code>radio</code>, <code>share</code>, <code>original</code></td><td>what a page <a href="#modules-takeover">took over</a></td><td></td></tr>
+<tr><td><code>row</code></td><td>blocks side by side, sharing the width evenly</td><td><code>blocks</code> · <code>gap</code> 0–40 (10). a row never holds another row</td></tr>
+<tr><td>any block, with <code>when</code></td><td>the block only shows while one of your settings says so (<code>"key"</code>, <code>"!key"</code>, <code>"key=value"</code>)</td><td></td></tr>
 </table></div>
 <p>the ids are in youtube music links: <code>music.youtube.com/watch?v=<b>id</b></code>, <code>/playlist?list=<b>id</b></code>, <code>/browse/<b>id</b></code>, <code>/channel/<b>id</b></code>.</p>
 <h2>Page shaders</h2>
@@ -2036,7 +2038,8 @@ half4 main(float2 p) {
 <tr><td><code>local_playlist</code></td><td>your own playlists</td><td>name, picture, song count, songs</td></tr>
 <tr><td><code>online_playlist</code></td><td>youtube music playlists</td><td>title, author and count, picture, songs</td></tr>
 <tr><td><code>album</code></td><td>an album</td><td>title, artists and year, cover, songs</td></tr>
-<tr><td><code>artist</code></td><td>an artist</td><td>name, listeners, picture, top songs</td></tr>
+<tr><td><code>artist</code></td><td>an artist</td><td>name, listeners, picture, banner, name logo, bio, every shelf (songs, albums, singles, similar artists…), follow and library state, radio, share link, top songs</td></tr>
+<tr><td><code>artist/songs</code>, <code>artist/albums</code>, <code>artist/similar</code>, <code>artist/items</code></td><td>the pages an artist's page opens: all songs, all albums, similar artists, one shelf in full</td><td>the same artist as <code>artist</code></td></tr>
 <tr><td><code>search</code></td><td>the search tab and its results</td><td>the query as <code>{query}</code> on results</td></tr>
 <tr><td><code>home</code>, <code>search_input</code> (only the tab), <code>library</code>, <code>history</code>, <code>stats</code>, <code>library/songs</code>, <code>auto_playlist</code>, <code>top_playlist</code>, <code>cache_playlist</code>, any other route</td><td>that page</td><td>the route's own parts as <code>{playlistId}</code>, <code>{albumId}</code>…</td></tr>
 </table></div>
@@ -2053,13 +2056,40 @@ half4 main(float2 p) {
 <h2>Blocks for what you took over</h2>
 <div class="tbl"><table>
 <tr><th>type</th><th>what it shows</th><th>fields</th></tr>
-<tr><td><code>cover</code></td><td>the playlist's, album's or artist's picture</td><td><code>height</code> 40–600 (240) · <code>corner</code> 0–300 (20) · <code>shape</code>: circle</td></tr>
+<tr><td><code>cover</code></td><td>the playlist's, album's or artist's picture</td><td><code>height</code> 40–600 (240) · <code>corner</code> 0–300 (20) · <code>shape</code>: circle · <code>source</code>: <code>cover</code>, <code>banner</code> (the artist's wide banner) or <code>logo</code> (the artist's name as a logo)</td></tr>
 <tr><td><code>songs</code></td><td>its songs. a tap plays from that song on. the playing one is lit</td><td><code>limit</code> 1–500 (500) · <code>numbers</code> (false) · <code>covers</code> (true) · <code>corner</code> (8). 30 show first, "show more" adds 50</td></tr>
 <tr><td><code>play</code>, <code>shuffle</code></td><td>play all of it, in order or shuffled</td><td><code>text</code> · <code>filled</code></td></tr>
+<tr><td><code>albums</code>, <code>artists</code></td><td>a scrolling row of the albums or the artists on the page. a tap opens it</td><td><code>limit</code> 1–60 (60) · <code>size</code> 64–260 (120) · <code>corner</code> 0–80 · <code>shape</code>: circle</td></tr>
+<tr><td><code>shelf</code></td><td>one shelf by its name, like <code>"Singles"</code> or <code>"Featured on"</code>. any words of the shelf's title will do</td><td><code>section</code> (required) · <code>limit</code> · <code>size</code> · <code>corner</code> · <code>shape</code></td></tr>
+<tr><td><code>bio</code></td><td>the artist's bio, a few lines first and all of it on a tap</td><td><code>lines</code> 1–40 (6)</td></tr>
+<tr><td><code>follow</code></td><td>follows the artist on the signed in youtube account. only shows when there is one</td><td><code>text</code> · <code>filled</code> (true)</td></tr>
+<tr><td><code>like</code></td><td>puts the artist in your library, or takes it out</td><td><code>text</code> · <code>filled</code></td></tr>
+<tr><td><code>radio</code></td><td>starts the artist's radio</td><td><code>text</code> · <code>filled</code></td></tr>
+<tr><td><code>share</code></td><td>opens the share sheet with the artist's link</td><td><code>text</code> · <code>filled</code></td></tr>
 <tr><td><code>original</code></td><td>opens mochy's own page in your page's place</td><td><code>text</code> · <code>filled</code></td></tr>
 </table></div>
 <p>a button only shows when it has something to do: no songs, no play button. <code>{ "type": "control", "action": "play" }</code> works too. every other page block works here as well.</p>
 <div class="note">your page reads the same data mochy's own page would, the same way, so it's as quick to open. a long playlist turns into rows off the main thread, and the rows come a screenful at a time.</div>
+<h2>Example: your own artist page</h2>
+<pre><code class="json">"settings": [ { "key": "showBio", "label": "Show the bio", "type": "toggle", "default": "true" } ],
+"pages": [
+  { "id": "artist", "title": "{title}", "replaces": ["artist"], "header": false,
+    "blocks": [
+      { "type": "cover", "source": "banner", "height": 280, "corner": 0 },
+      { "type": "cover", "source": "logo", "height": 80 },
+      { "type": "text", "text": "{subtitle}" },
+      { "type": "row", "blocks": [ { "type": "play" }, { "type": "follow" }, { "type": "radio" } ] },
+      { "type": "heading", "text": "Popular" },
+      { "type": "songs", "limit": 5, "numbers": true },
+      { "type": "heading", "text": "Albums" },
+      { "type": "albums" },
+      { "type": "heading", "text": "Fans also like" },
+      { "type": "artists", "size": 96 },
+      { "type": "bio", "when": "showBio" },
+      { "type": "original", "text": "Open Mochy's page" }
+    ] }
+]</code></pre>
+<p>a block whose type mochy doesn't know is left out of the page, and the reason shows in the log, so a typo can't break the page.</p>
 </article>
 
 <article class="page" id="modules-interface-example" data-group="Interfaces" data-title="Example: Liquid Glass">

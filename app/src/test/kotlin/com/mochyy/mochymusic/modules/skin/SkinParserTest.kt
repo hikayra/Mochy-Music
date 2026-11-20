@@ -394,6 +394,38 @@ class SkinParserTest {
     }
 
     @Test
+    fun `an artist page reads its shelves and bio and buttons and rows and blocks that carry a when`() {
+        val text = """
+            { "id": "p", "name": "P", "pages": [ { "id": "artist", "title": "{title}", "replaces": ["artist", "artist/songs"],
+              "blocks": [ { "type": "cover", "source": "banner" }, { "type": "cover", "source": "logo" }, { "type": "bio", "lines": 999 },
+              { "type": "albums", "limit": 5 }, { "type": "artists" }, { "type": "shelf", "section": "Singles" }, { "type": "shelf" },
+              { "type": "row", "blocks": [ { "type": "follow" }, { "type": "radio" }, { "type": "row", "blocks": [ { "type": "share" } ] } ] },
+              { "type": "like", "when": "!hideLike" }, { "type": "sparkles" } ] } ] }
+        """
+        val page = skin(text)!!.pages.single()
+        assertEquals(listOf("artist", "artist/songs"), page.replaces)
+        // the shelf with no section and the unknown block are dropped so eight blocks are left
+        assertEquals(8, page.blocks.size)
+        assertEquals(PageCoverSource.Banner, (page.blocks[0] as PageBlock.Cover).source)
+        assertEquals(PageCoverSource.Logo, (page.blocks[1] as PageBlock.Cover).source)
+        assertEquals(40, (page.blocks[2] as PageBlock.Bio).lines)
+        val albums = page.blocks[3] as PageBlock.Shelf
+        assertEquals(PageItemKind.Album, albums.kind)
+        assertEquals(5, albums.limit)
+        val artists = page.blocks[4] as PageBlock.Shelf
+        assertEquals(PageItemKind.Artist, artists.kind)
+        assertTrue(artists.circle)
+        assertEquals("Singles", (page.blocks[5] as PageBlock.Shelf).title)
+        // a row never holds another row
+        val row = page.blocks[6] as PageBlock.Row
+        assertEquals(listOf(PageControl.Follow, PageControl.Radio), row.blocks.map { (it as PageBlock.Control).kind })
+        val like = page.blocks[7] as PageBlock.When
+        assertEquals(PageControl.Like, (like.block as PageBlock.Control).kind)
+        assertTrue(like.condition.holdsFor(emptyMap()))
+        assertFalse(like.condition.holdsFor(mapOf("hideLike" to "true")))
+    }
+
+    @Test
     fun `custom lyrics with poses, an entrance and shaders from a zip`() {
         val text = """
             { "id": "p", "name": "P", "player": { "keyframes": { "pop": { "from": { "scale": 0.8 }, "to": { "scale": 1 } } },

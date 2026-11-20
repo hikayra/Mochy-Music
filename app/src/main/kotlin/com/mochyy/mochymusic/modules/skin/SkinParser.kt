@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import timber.log.Timber
 import java.io.File
 
 internal object SkinParser {
@@ -119,7 +120,14 @@ internal object SkinParser {
         return SkinShaderSource(file, shaderUniforms(o["uniforms"], PageUniforms))
     }
 
-    private fun pageBlock(o: JsonObject, fromZip: Boolean, nested: Boolean): PageBlock? = when (val type = o.string("type")?.lowercase()) {
+    // any block can carry a when that hides it while one of the module settings says no
+    private fun pageBlock(o: JsonObject, fromZip: Boolean, nested: Boolean): PageBlock? {
+        val block = pageBlockBody(o, fromZip, nested) ?: return null
+        val condition = o.string("when")?.let(SkinAnimationParser::condition) ?: return block
+        return PageBlock.When(condition, block)
+    }
+
+    private fun pageBlockBody(o: JsonObject, fromZip: Boolean, nested: Boolean): PageBlock? = when (val type = o.string("type")?.lowercase()) {
         "heading" -> o.string("text")?.take(120)?.let(PageBlock::Heading)
         "text" -> o.string("text")?.take(2000)?.let(PageBlock::Paragraph)
         "image" -> o.string("image")?.let {
@@ -166,21 +174,51 @@ internal object SkinParser {
             height = (o.float("height") ?: 240f).coerceIn(40f, 600f).dp,
             corner = (o.float("corner") ?: 20f).coerceIn(0f, 300f).dp,
             circle = o.string("shape")?.lowercase() == "circle",
+            source = when (o.string("source")?.lowercase()) {
+                "banner" -> PageCoverSource.Banner
+                "logo" -> PageCoverSource.Logo
+                else -> PageCoverSource.Cover
+            },
         )
+        "albums" -> shelf(o, null, PageItemKind.Album, circle = false)
+        "artists" -> shelf(o, null, PageItemKind.Artist, circle = true)
+        "shelf", "section" -> shelf(o, o.string("section") ?: o.string("title"), null, circle = false)
+        "bio", "about" -> PageBlock.Bio((o.float("lines")?.toInt() ?: 6).coerceIn(1, 40))
+        // a row holds plain blocks and never another row
+        "row", "columns" -> pageBlocks(o["blocks"], fromZip, nested).filter { it.unwrap() !is PageBlock.Row }.takeIf { it.isNotEmpty() }?.let { inside ->
+            PageBlock.Row(inside, (o.float("gap") ?: 10f).coerceIn(0f, 40f).dp)
+        }
         "songs", "tracks" -> PageBlock.Songs(
             limit = (o.float("limit")?.toInt() ?: MaxSongs).coerceIn(1, MaxSongs),
             numbers = o.bool("numbers") ?: false,
             covers = o.bool("covers") ?: true,
             corner = (o.float("corner") ?: 8f).coerceIn(0f, 30f).dp,
         )
-        "play", "shuffle", "original", "use" -> control(o, type)
+        "play", "shuffle", "original", "use", "follow", "subscribe", "like", "radio", "share" -> control(o, type)
         "control" -> o.string("action")?.lowercase()?.let { control(o, it) }
         "player", "preview" -> PageBlock.Player(
             height = (o.float("height") ?: 420f).coerceIn(160f, 720f).dp,
             corner = (o.float("corner") ?: 28f).coerceIn(0f, 60f).dp,
         )
         "styles", "substyles" -> PageBlock.Styles
-        else -> null
+        else -> {
+            // a block type nobody knows is dropped so it gets a log line to help whoever writes the module
+            Timber.w("module page block type not known: %s", type)
+            null
+        }
+    }
+
+    // albums and artists pick their items by kind and a shelf picks a section by its title
+    private fun shelf(o: JsonObject, title: String?, kind: PageItemKind?, circle: Boolean): PageBlock? {
+        if (title == null && kind == null) return null
+        return PageBlock.Shelf(
+            title = title?.take(60),
+            kind = kind,
+            limit = (o.float("limit")?.toInt() ?: MaxShelf).coerceIn(1, MaxShelf),
+            corner = (o.float("corner") ?: if (circle) 0f else 12f).coerceIn(0f, 80f).dp,
+            circle = circle || o.string("shape")?.lowercase() == "circle",
+            size = (o.float("size") ?: 120f).coerceIn(64f, 260f).dp,
+        )
     }
 
     // a button that plays, shuffles, opens mochy's own page or sets the module's player, in the page's words or mochy's
@@ -190,9 +228,15 @@ internal object SkinParser {
             "shuffle" -> PageControl.Shuffle
             "original", "mochy" -> PageControl.Original
             "use", "useplayer", "setplayer" -> PageControl.UsePlayer
+            "follow", "subscribe" -> PageControl.Follow
+            "like", "heart" -> PageControl.Like
+            "radio" -> PageControl.Radio
+            "share" -> PageControl.Share
             else -> return null
         }
-        return PageBlock.Control(o.string("text")?.take(40).orEmpty(), kind, filled = o.bool("filled") ?: (kind == PageControl.Play))
+        // play and follow start out filled since they are the main button of a page
+        val main = kind == PageControl.Play || kind == PageControl.Follow
+        return PageBlock.Control(o.string("text")?.take(40).orEmpty(), kind, filled = o.bool("filled") ?: main)
     }
 
     // ---- the player's menu ----------------------------------------------------------------------
@@ -214,6 +258,7 @@ internal object SkinParser {
     private val PageName = Regex("[a-z0-9_/]{1,60}")
     private const val MaxReplaces = 8
     private const val MaxSongs = 500
+    private const val MaxShelf = 60
     private const val MaxPages = 12
     private const val MaxPageBlocks = 80
     private const val MaxActions = 6
