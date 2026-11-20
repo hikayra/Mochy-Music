@@ -8,6 +8,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color as AColor
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
@@ -18,6 +19,7 @@ import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.SweepGradient
 import android.graphics.Typeface
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -33,13 +35,23 @@ import android.text.TextPaint
 import android.text.TextUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -48,12 +60,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -63,24 +83,45 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil3.compose.AsyncImage
+import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.models.MediaMetadata
 import com.mochyy.mochymusic.ui.player.menu.MenuRowSurface
+import com.mochyy.mochymusic.ui.theme.InterFontFamily
+import com.mochyy.mochymusic.ui.utils.resize
+import java.io.File
+import java.io.OutputStream
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -88,19 +129,13 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.OutputStream
-import java.util.Locale
-import kotlin.math.roundToInt
-import android.graphics.Color as AColor
 
 // lyric card: pick lines and get a card like the ones genius makes
-// the background can be the cover or any image gif or video (spotify canvas and apple animated cover have no public api
-// so those are saved by the user and picked as a file). a video can run as it is or give one still frame
-// preview and export use the same renderer so what you see is what you get
+// eight looks all from the same renderer so preview and export match
+// background comes from inside the app (cover loops artist photos colours) no file picking
 
 internal data class CardStyle(
-    val name: String = "Classic",
+    val name: String = "Genius",
     val ratio: Float = 1f,
     val blur: Float = 0.35f,
     val dim: Float = 0.45f,
@@ -112,36 +147,55 @@ internal data class CardStyle(
     val center: Boolean = false,
     // 0 top 1 middle 2 bottom
     val vAlign: Int = 1,
-    // 0 sans 1 serif 2 mono
+    // 0 sans 1 serif 2 mono 3 condensed
     val font: Int = 0,
     val marker: Boolean = false,
+    // 0 white 1 the covers accent 2 genius yellow
+    val markerColor: Int = 0,
     val panel: Boolean = false,
-    val coverCard: Boolean = false,
+    // 0 nothing 1 sharp cover card 2 vinyl 3 header row with cover and names
+    val coverMode: Int = 0,
+    // 0 on the picture 1 paper 2 flat accent colour
+    val theme: Int = 0,
+    val glow: Boolean = false,
+    val upper: Boolean = false,
+    val quote: Boolean = false,
     val footer: Boolean = true,
     val watermark: Boolean = true,
 ) {
     private fun f(x: Float) = String.format(Locale.US, "%.2f", x)
 
-    // short text of every value so a liked look can be sent back as it is
     fun describe() = "preset=$name ratio=${f(ratio)} blur=${f(blur)} dim=${f(dim)} saturation=${f(saturation)} zoom=${f(zoom)} " +
         "vignette=${f(vignette)} scrim=${f(scrim)} textScale=${f(textScale)} center=$center vAlign=$vAlign font=$font " +
-        "marker=$marker panel=$panel coverCard=$coverCard footer=$footer watermark=$watermark"
+        "marker=$marker markerColor=$markerColor panel=$panel coverMode=$coverMode theme=$theme glow=$glow upper=$upper " +
+        "quote=$quote footer=$footer watermark=$watermark"
 }
 
 internal val CardPresets = listOf(
-    CardStyle(name = "Classic", blur = 0.35f, dim = 0.45f, saturation = 1.05f, vignette = 0.3f),
+    // the yellow highlighter on a dark cover with the song up top how genius does it
+    CardStyle(name = "Genius", blur = 0.55f, dim = 0.5f, saturation = 1.1f, vignette = 0.35f, coverMode = 3, marker = true, markerColor = 2, footer = false, textScale = 0.95f),
+    CardStyle(name = "Poster", blur = 1f, dim = 0.35f, saturation = 1.2f, vignette = 0.2f, coverMode = 1, center = true, vAlign = 2, textScale = 0.72f),
     CardStyle(name = "Frosted", blur = 0.9f, dim = 0.22f, saturation = 1.3f, vignette = 0f, center = true, panel = true, textScale = 0.9f),
+    CardStyle(name = "Vinyl", blur = 1f, dim = 0.5f, saturation = 1.2f, vignette = 0.25f, coverMode = 2, center = true, vAlign = 2, textScale = 0.7f, font = 1),
+    CardStyle(name = "Neon", blur = 1f, dim = 0.6f, saturation = 1.7f, vignette = 0.1f, center = true, glow = true, upper = true, font = 3, textScale = 1.05f),
+    CardStyle(name = "Paper", theme = 1, quote = true, font = 1, vignette = 0f, dim = 0f, textScale = 0.9f),
+    CardStyle(name = "Accent", theme = 2, upper = true, font = 3, vignette = 0f, dim = 0f, textScale = 1.1f),
     CardStyle(name = "Cinema", blur = 0f, dim = 0.12f, vignette = 0.45f, scrim = 0.85f, vAlign = 2, textScale = 0.8f),
-    CardStyle(name = "Poster", blur = 1f, dim = 0.35f, saturation = 1.2f, vignette = 0.2f, coverCard = true, center = true, vAlign = 2, textScale = 0.75f),
-    CardStyle(name = "Marker", blur = 0.5f, dim = 0.4f, vignette = 0.25f, marker = true),
-    CardStyle(name = "Mono", blur = 0.2f, dim = 0.55f, saturation = 0f, vignette = 0.5f, center = true, font = 1),
-    CardStyle(name = "Glow", blur = 1f, dim = 0.15f, saturation = 1.8f, vignette = 0f, center = true, textScale = 1.1f),
 )
 
-internal class CardContent(val lines: List<String>, val title: String, val artist: String, val cover: Bitmap?)
+// accent is the loudest colour of the cover and solid is a colour picked as the whole background
+internal class CardContent(
+    val lines: List<String>,
+    val title: String,
+    val artist: String,
+    val cover: Bitmap?,
+    val accent: Int = 0xFFFFD166.toInt(),
+    val solid: Int? = null,
+)
 
-// everything on the card that doesnt move: shade and text and footer. the glass panel is cut out of it later
-internal class CardOverlay(val bitmap: Bitmap, val panel: RectF?, val panelRadius: Float)
+// everything on the card that doesnt move: shade and text and footer the glass panel is cut out of it later
+// bgcolor is set when the card paints its own flat background and then the picture isnt used at all
+internal class CardOverlay(val bitmap: Bitmap, val panel: RectF?, val panelRadius: Float, val bgColor: Int?)
 
 // ---- the renderer ----
 
@@ -151,11 +205,37 @@ internal object CardRender {
     private fun faceOf(font: Int): Typeface = when (font) {
         1 -> Typeface.create(Typeface.SERIF, Typeface.BOLD)
         2 -> Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        3 -> Typeface.create("sans-serif-condensed", Typeface.BOLD)
         else -> Typeface.create("sans-serif", Typeface.BOLD)
     }
 
+    private fun luma(c: Int) = (AColor.red(c) * 0.299 + AColor.green(c) * 0.587 + AColor.blue(c) * 0.114) / 255.0
+
+    private fun withAlpha(c: Int, a: Int) = AColor.argb(a, AColor.red(c), AColor.green(c), AColor.blue(c))
+
     private fun roundedClip(cv: Canvas, r: RectF, radius: Float) {
         cv.clipPath(Path().apply { addRoundRect(r, radius, radius, Path.Direction.CW) })
+    }
+
+    private fun drawCover(cv: Canvas, cover: Bitmap, r: RectF, radius: Float) {
+        cv.save()
+        roundedClip(cv, r, radius)
+        cv.drawBitmap(cover, null, r, Paint(Paint.FILTER_BITMAP_FLAG))
+        cv.restore()
+    }
+
+    private fun text(u: Float, size: Float, face: Typeface, color: Int, shadow: Boolean) = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = face
+        textSize = size * u
+        this.color = color
+        if (shadow) setShadowLayer(u * 0.8f, 0f, u * 0.3f, AColor.argb(100, 0, 0, 0))
+    }
+
+    // the flat colour a style paints by itself or null when the picture is the background
+    fun backgroundOf(s: CardStyle, c: CardContent): Int? = when {
+        s.theme == 1 -> 0xFFF3ECDD.toInt()
+        s.theme == 2 -> c.accent
+        else -> c.solid
     }
 
     fun overlay(s: CardStyle, c: CardContent, w: Int, h: Int): CardOverlay {
@@ -165,7 +245,13 @@ internal object CardRender {
         val pad = 8f * u
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
 
-        if (s.vignette > 0f) {
+        val bg = backgroundOf(s, c)
+        val light = bg != null && luma(bg) > 0.62
+        val ink = if (light) 0xFF15140F.toInt() else AColor.WHITE
+        val soft = withAlpha(ink, if (light) 150 else 175)
+        val onPicture = bg == null
+
+        if (!light && s.vignette > 0f) {
             p.shader = RadialGradient(
                 w / 2f, h / 2f, maxOf(w, h) * 0.75f,
                 intArrayOf(0, AColor.argb((s.vignette * 210).toInt(), 0, 0, 0)), floatArrayOf(0.4f, 1f), Shader.TileMode.CLAMP,
@@ -173,7 +259,7 @@ internal object CardRender {
             cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), p)
             p.shader = null
         }
-        if (s.scrim > 0f) {
+        if (!light && s.scrim > 0f) {
             p.shader = LinearGradient(0f, h * 0.3f, 0f, h.toFloat(), 0, AColor.argb((s.scrim * 235).toInt(), 0, 0, 0), Shader.TileMode.CLAMP)
             cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), p)
             p.shader = null
@@ -184,8 +270,23 @@ internal object CardRender {
         val bottom = h - pad - footerH - (if (footerH > 0f) 4f * u else 0f)
         var top = pad
 
-        // the cover as a sharp card above the text
-        if (s.coverCard && c.cover != null) {
+        // header row: small cover and the song and the artist the way genius opens its cards
+        if (s.coverMode == 3) {
+            val th = 11f * u
+            var x = pad
+            c.cover?.let {
+                drawCover(cv, it, RectF(x, top, x + th, top + th), 2f * u)
+                x += th + 3.2f * u
+            }
+            val maxW = w - x - pad
+            val title = text(u, 4.2f, Typeface.create("sans-serif", Typeface.BOLD), ink, onPicture)
+            val sub = text(u, 3.4f, Typeface.create("sans-serif-medium", Typeface.NORMAL), soft, false)
+            cv.drawText(TextUtils.ellipsize(c.title, title, maxW, TextUtils.TruncateAt.END).toString(), x, top + th * 0.46f, title)
+            cv.drawText(TextUtils.ellipsize(c.artist, sub, maxW, TextUtils.TruncateAt.END).toString(), x, top + th * 0.9f, sub)
+            top += th + 7f * u
+        }
+
+        if (s.coverMode == 1 && c.cover != null) {
             val sz = w * 0.36f
             val left = (w - sz) / 2f
             val r = RectF(left, top + 2f * u, left + sz, top + 2f * u + sz)
@@ -193,29 +294,68 @@ internal object CardRender {
             p.setShadowLayer(4f * u, 0f, 2f * u, AColor.argb(120, 0, 0, 0))
             cv.drawRoundRect(r, 3f * u, 3f * u, p)
             p.clearShadowLayer()
-            cv.save()
-            roundedClip(cv, r, 3f * u)
-            cv.drawBitmap(c.cover, null, r, Paint(Paint.FILTER_BITMAP_FLAG))
-            cv.restore()
+            drawCover(cv, c.cover, r, 3f * u)
             top = r.bottom + 5f * u
         }
 
-        // the lyric text as big as fits
-        val text = c.lines.joinToString("\n")
+        if (s.coverMode == 2) {
+            val d = w * 0.44f
+            val cx = w / 2f
+            val cy = top + 2f * u + d / 2f
+            p.color = 0xFF0E0E10.toInt()
+            p.setShadowLayer(4f * u, 0f, 2f * u, AColor.argb(130, 0, 0, 0))
+            cv.drawCircle(cx, cy, d / 2f, p)
+            p.clearShadowLayer()
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 0.22f * u
+            p.color = AColor.argb(26, 255, 255, 255)
+            var rad = d * 0.27f
+            while (rad < d / 2f - 0.6f * u) {
+                cv.drawCircle(cx, cy, rad, p)
+                rad += 0.95f * u
+            }
+            p.style = Paint.Style.FILL
+            p.shader = SweepGradient(cx, cy, intArrayOf(0, AColor.argb(46, 255, 255, 255), 0, AColor.argb(46, 255, 255, 255), 0), null)
+            cv.drawCircle(cx, cy, d / 2f, p)
+            p.shader = null
+            val label = d * 0.2f
+            if (c.cover != null) {
+                cv.save()
+                cv.clipPath(Path().apply { addCircle(cx, cy, label, Path.Direction.CW) })
+                cv.drawBitmap(c.cover, null, RectF(cx - label, cy - label, cx + label, cy + label), Paint(Paint.FILTER_BITMAP_FLAG))
+                cv.restore()
+            }
+            p.color = 0xFF0B0B0C.toInt()
+            cv.drawCircle(cx, cy, d * 0.024f, p)
+            top = cy + d / 2f + 6f * u
+        }
+
+        if (s.quote) {
+            val q = text(u, 26f, Typeface.create(Typeface.SERIF, Typeface.BOLD), if (light) withAlpha(ink, 90) else c.accent, false)
+            if (s.center) q.textAlign = Paint.Align.CENTER
+            cv.drawText("“", if (s.center) w / 2f else pad, top + 17f * u, q)
+            top += 12f * u
+        }
+
+        val raw = c.lines.joinToString("\n")
+        val body = if (s.upper) raw.uppercase() else raw
         val boxPad = if (s.panel) 5f * u else 0f
         val markerPad = if (s.marker) 1.6f * u else 0f
         val availW = (w - 2 * pad - 2 * boxPad - 2 * markerPad).toInt().coerceAtLeast(10)
         val regionH = (bottom - top - 2 * boxPad).coerceAtLeast(10f)
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = faceOf(s.font)
-            color = if (s.marker) AColor.BLACK else AColor.WHITE
-            if (!s.marker) setShadowLayer(u * 1.2f, 0f, u * 0.4f, AColor.argb(110, 0, 0, 0))
+            color = if (s.marker) AColor.BLACK else ink
+            when {
+                s.glow -> setShadowLayer(u * 3.6f, 0f, 0f, c.accent)
+                onPicture && !s.marker -> setShadowLayer(u * 1.2f, 0f, u * 0.4f, AColor.argb(110, 0, 0, 0))
+            }
         }
         fun build(sz: Float): StaticLayout {
             tp.textSize = sz
-            return StaticLayout.Builder.obtain(text, 0, text.length, tp, availW)
+            return StaticLayout.Builder.obtain(body, 0, body.length, tp, availW)
                 .setAlignment(if (s.center) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL)
-                .setLineSpacing(0f, if (s.marker) 1.22f else 1.12f)
+                .setLineSpacing(0f, if (s.marker) 1.22f else if (s.font == 3) 1.04f else 1.12f)
                 .setIncludePad(false)
                 .build()
         }
@@ -247,7 +387,11 @@ internal object CardRender {
             p.style = Paint.Style.FILL
         }
         if (s.marker) {
-            p.color = AColor.WHITE
+            p.color = when (s.markerColor) {
+                1 -> c.accent
+                2 -> 0xFFFFFF64.toInt()
+                else -> AColor.WHITE
+            }
             val inset = size * 0.04f
             for (i in 0 until layout.lineCount) {
                 val l = tx + layout.getLineLeft(i) - markerPad
@@ -259,45 +403,28 @@ internal object CardRender {
         cv.save()
         cv.translate(tx, ty)
         layout.draw(cv)
+        if (s.glow) layout.draw(cv)
         cv.restore()
 
-        // footer: small cover and title and artist
         if (s.footer) {
             val y = h - pad - thumb
             var x = pad
             c.cover?.let {
-                val r = RectF(x, y, x + thumb, y + thumb)
-                cv.save()
-                roundedClip(cv, r, 2f * u)
-                cv.drawBitmap(it, null, r, Paint(Paint.FILTER_BITMAP_FLAG))
-                cv.restore()
+                drawCover(cv, it, RectF(x, y, x + thumb, y + thumb), 2f * u)
                 x += thumb + 3f * u
             }
             val maxW = w - x - pad - (if (s.watermark) 24f * u else 0f)
-            val title = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = Typeface.create("sans-serif", Typeface.BOLD)
-                textSize = 3.9f * u
-                color = AColor.WHITE
-                setShadowLayer(u * 0.8f, 0f, u * 0.3f, AColor.argb(100, 0, 0, 0))
-            }
-            val sub = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                textSize = 3.2f * u
-                color = AColor.argb(175, 255, 255, 255)
-            }
+            val title = text(u, 3.9f, Typeface.create("sans-serif", Typeface.BOLD), ink, onPicture)
+            val sub = text(u, 3.2f, Typeface.create("sans-serif-medium", Typeface.NORMAL), soft, false)
             cv.drawText(TextUtils.ellipsize(c.title, title, maxW, TextUtils.TruncateAt.END).toString(), x, y + thumb * 0.45f, title)
             cv.drawText(TextUtils.ellipsize(c.artist, sub, maxW, TextUtils.TruncateAt.END).toString(), x, y + thumb * 0.88f, sub)
         }
         if (s.watermark) {
-            val wm = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                textSize = 2.8f * u
-                color = AColor.argb(135, 255, 255, 255)
-                textAlign = Paint.Align.RIGHT
-            }
+            val wm = text(u, 2.8f, Typeface.create("sans-serif-medium", Typeface.NORMAL), withAlpha(ink, 135), false)
+            wm.textAlign = Paint.Align.RIGHT
             cv.drawText("mochy music", w - pad, h - pad - (if (s.footer) thumb * 0.12f else 0f), wm)
         }
-        return CardOverlay(bmp, panel, panelRadius)
+        return CardOverlay(bmp, panel, panelRadius, bg)
     }
 
     // a soft blur from shrinking the picture and growing it back in steps
@@ -313,7 +440,6 @@ internal object CardRender {
         return Bitmap.createScaledBitmap(cur, src.width, src.height, true)
     }
 
-    // the picture cropped from the middle to the card shape
     private fun fit(raw: Bitmap, w: Int, h: Int, zoom: Float): Bitmap {
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val ta = w.toFloat() / h
@@ -334,7 +460,13 @@ internal object CardRender {
     fun frame(s: CardStyle, raw: Bitmap?, ov: CardOverlay, w: Int, h: Int): Bitmap {
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val cv = Canvas(out)
-        if (raw == null) {
+        val flat = ov.bgColor
+        if (flat != null) {
+            // paper stays flat and the rest slant into a deeper shade of themselves
+            val deep = if (s.theme == 1) flat else AColor.rgb((AColor.red(flat) * 0.6f).toInt(), (AColor.green(flat) * 0.6f).toInt(), (AColor.blue(flat) * 0.6f).toInt())
+            val g = Paint().apply { shader = LinearGradient(0f, 0f, w * 0.45f, h.toFloat(), flat, deep, Shader.TileMode.CLAMP) }
+            cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), g)
+        } else if (raw == null) {
             val g = Paint().apply { shader = LinearGradient(0f, 0f, w.toFloat(), h.toFloat(), 0xFF2A2A30.toInt(), 0xFF0B0B0C.toInt(), Shader.TileMode.CLAMP) }
             cv.drawRect(0f, 0f, w.toFloat(), h.toFloat(), g)
         } else {
@@ -350,7 +482,7 @@ internal object CardRender {
                 cv.restore()
             }
         }
-        if (s.dim > 0f) cv.drawColor(AColor.argb((s.dim * 255).toInt(), 0, 0, 0))
+        if (flat == null && s.dim > 0f) cv.drawColor(AColor.argb((s.dim * 255).toInt(), 0, 0, 0))
         cv.drawBitmap(ov.bitmap, 0f, 0f, null)
         return out
     }
@@ -713,11 +845,19 @@ internal object CardExport {
 }
 
 // ---- the editor ----
+// laid out like the edit player: styles swipe sideways and backgrounds sit on a strip below
+
+private fun inter(size: TextUnit, weight: FontWeight = FontWeight.SemiBold) = TextStyle(
+    fontFamily = InterFontFamily,
+    fontSize = size,
+    fontWeight = weight,
+    letterSpacing = (-0.05).em,
+)
 
 @Composable
 private fun CardLabel(text: String) {
     Spacer(Modifier.height(18.dp))
-    Text(text.uppercase(), color = InfoMuted, fontSize = 11.sp, letterSpacing = 1.2.sp, fontWeight = FontWeight.Bold)
+    Text(text.uppercase(), color = InfoMuted, letterSpacing = 1.2.sp, style = inter(10.sp, FontWeight.Bold))
     Spacer(Modifier.height(6.dp))
 }
 
@@ -730,15 +870,80 @@ private fun ChipRow(content: @Composable RowScope.() -> Unit) {
 private fun CardSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, text: String, onChange: (Float) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(label, color = Color.White, style = inter(14.sp, FontWeight.Medium))
             Spacer(Modifier.weight(1f))
-            Text(text, color = InfoMuted, fontSize = 13.sp)
+            Text(text, color = InfoMuted, style = inter(13.sp, FontWeight.Medium))
         }
         Slider(
             value = value,
             onValueChange = onChange,
             valueRange = range,
             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.15f)),
+        )
+    }
+}
+
+@Composable
+private fun ActionButton(text: String, icon: Int, filled: Boolean, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val ink = if (filled) Color.Black else Color.White
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .height(48.dp)
+            .clip(RoundedCornerShape(50))
+            .background(if (filled) Color.White.copy(alpha = if (enabled) 0.92f else 0.4f) else Color.White.copy(alpha = 0.12f))
+            .clickable(enabled = enabled, interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = ink, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, color = ink, style = inter(14.sp, FontWeight.Bold))
+    }
+}
+
+private fun Backdrop.tile(): String = when (this) {
+    Backdrop.Cover -> "Cover"
+    is Backdrop.Colour -> "Colour"
+    is Backdrop.Photo -> source.substringBefore(" ·")
+    is Backdrop.Motion -> source.substringBefore(" ·")
+}
+
+@Composable
+private fun BackdropTile(item: Backdrop, selected: Boolean, coverUrl: String?, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
+        Box(
+            Modifier
+                .size(76.dp)
+                .clip(shape)
+                .background(MenuRowSurface)
+                .border(if (selected) 2.dp else 1.dp, Color.White.copy(alpha = if (selected) 0.95f else 0.14f), shape)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
+        ) {
+            when (item) {
+                Backdrop.Cover -> AsyncImage(model = coverUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                is Backdrop.Colour -> Box(
+                    Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(item.argb), lerp(Color(item.argb), Color.Black, 0.5f)))),
+                )
+                is Backdrop.Photo -> AsyncImage(model = item.thumb, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                is Backdrop.Motion -> {
+                    AsyncImage(model = item.poster ?: coverUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp).size(20.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.6f)),
+                    ) {
+                        Icon(painterResource(R.drawable.play), contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                    }
+                }
+            }
+        }
+        Text(
+            item.tile(),
+            color = if (selected) Color.White else InfoMuted,
+            style = inter(10.sp, FontWeight.Medium),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 5.dp),
         )
     }
 }
@@ -751,85 +956,125 @@ internal fun LyricCardEditor(song: MediaMetadata, lines: List<String>, onDismiss
 
     var style by remember { mutableStateOf(CardPresets[0]) }
     var cover by remember { mutableStateOf<Bitmap?>(null) }
-    var picked by remember { mutableStateOf<BgSource?>(null) }
+    var colours by remember { mutableStateOf<List<Int>>(emptyList()) }
+    val found = remember { mutableStateListOf<Backdrop>() }
+    var searching by remember { mutableStateOf(true) }
+    var picked by remember { mutableStateOf<Backdrop>(Backdrop.Cover) }
+    var source by remember { mutableStateOf<BgSource?>(null) }
+    var preparing by remember { mutableStateOf(false) }
     var useStill by remember { mutableStateOf(false) }
     var stillFrac by remember { mutableFloatStateOf(0.1f) }
     var startFrac by remember { mutableFloatStateOf(0f) }
     var clipSeconds by remember { mutableFloatStateOf(5f) }
-    var kind by remember { mutableIntStateOf(0) }
+    var kind by remember { mutableIntStateOf(2) }
     var fps by remember { mutableIntStateOf(50) }
     var exportWidth by remember { mutableIntStateOf(720) }
     var progress by remember { mutableStateOf<Float?>(null) }
     var previewRaw by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var shown by remember { mutableStateOf<Bitmap?>(null) }
+    var tick by remember { mutableIntStateOf(0) }
     var hint by remember { mutableStateOf<String?>(null) }
+    var more by remember { mutableStateOf(false) }
 
-    LaunchedEffect(song.id) { cover = withContext(Dispatchers.IO) { loadCover(song.thumbnailUrl) } }
-    DisposableEffect(picked) {
-        val p = picked
-        onDispose { p?.close() }
+    // the cover first and then everything else the app can find for this song and its artists
+    LaunchedEffect(song.id) {
+        val bmp = withContext(Dispatchers.IO) { loadCover(song.thumbnailUrl) }
+        cover = bmp
+        val hash = bmp?.let { withContext(Dispatchers.Default) { runCatching { pictureHash(it) }.getOrNull() } }
+        if (bmp != null) colours = withContext(Dispatchers.Default) { runCatching { CardPalette.of(bmp) }.getOrDefault(emptyList()) }
+        searching = true
+        runCatching {
+            CardBackdropFinder.discover(context.applicationContext, song, hash) { item -> if (found.none { it.id == item.id }) found.add(item) }
+        }
+        searching = false
+    }
+    DisposableEffect(Unit) {
+        onDispose { source?.close() }
     }
 
-    val bg = remember(picked, cover) { picked ?: cover?.let { StillBg(it) } }
+    // the picked background turned into something the renderer reads frames from
+    LaunchedEffect(picked, cover) {
+        val choice = picked
+        fun swap(next: BgSource?) {
+            val old = source
+            source = next
+            if (old !== next) old?.close()
+        }
+        preparing = true
+        hint = null
+        useStill = false
+        startFrac = 0f
+        when (choice) {
+            Backdrop.Cover -> swap(cover?.let { StillBg(it) })
+            is Backdrop.Colour -> swap(null)
+            is Backdrop.Photo -> {
+                val bmp = loadCardBitmap(context, choice.url, 1600)
+                if (bmp == null) hint = "Couldn't load that photo"
+                swap((bmp ?: cover)?.let { StillBg(it) })
+            }
+            is Backdrop.Motion -> {
+                // the poster shows at once and the loop takes over when its clip is ready
+                val poster = (choice.poster?.let { loadCardBitmap(context, it, 1080) }) ?: cover
+                swap(poster?.let { StillBg(it) })
+                val file = CardClips.fetch(context, choice.url)
+                val video = file?.let { f -> withContext(Dispatchers.IO) { runCatching { VideoBg(context, Uri.fromFile(f)) }.getOrNull() } }
+                if (video != null && video.durationMs > 0L) {
+                    swap(video)
+                    kind = 2
+                } else {
+                    video?.close()
+                    hint = "Couldn't load that loop, showing a still"
+                }
+            }
+        }
+        preparing = false
+    }
+
+    val solid = (picked as? Backdrop.Colour)?.argb
+    val accent = remember(colours) { CardPalette.accent(colours) }
+    val content = remember(lines, song.id, cover, accent, solid) { CardContent(lines, song.title, artist, cover, accent, solid) }
+    val flat = style.theme != 0 || solid != null
+
+    val bg = source
     val dur = bg?.durationMs ?: 0L
-    val animated = dur > 0L
+    val animated = dur > 0L && !flat
     val lenMs = minOf((clipSeconds * 1000).toLong(), dur)
     val startMs = ((dur - lenMs) * startFrac).toLong()
     val stillMs = (dur * stillFrac).toLong()
     val effKind = if (animated && !useStill) kind else 0
-    val content = remember(lines, song.id, cover) { CardContent(lines, song.title, artist, cover) }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            val src = withContext(Dispatchers.IO) { openSource(context, uri) }
-            if (src == null) {
-                hint = "Couldn't open that file"
-            } else {
-                picked = src
-                useStill = false
-                startFrac = 0f
-                kind = if (src.durationMs > 0L) 1 else 0
-            }
-        }
-    }
 
     // the raw background frames for the preview: low quality and about 10 per second
-    LaunchedEffect(bg, useStill, stillMs, startMs, lenMs) {
-        delay(220)
-        val source = bg
-        if (source == null) {
+    LaunchedEffect(bg, flat, useStill, stillMs, startMs, lenMs) {
+        delay(200)
+        val src = bg
+        if (src == null || flat) {
             previewRaw = emptyList()
             return@LaunchedEffect
         }
         previewRaw = withContext(Dispatchers.IO) {
-            if (source.durationMs <= 0L) {
-                listOfNotNull(source.frame(0, 480))
+            if (src.durationMs <= 0L) {
+                listOfNotNull(runCatching { src.frame(0, 480) }.getOrNull())
             } else if (useStill) {
-                listOfNotNull(source.frame(stillMs, 480))
+                listOfNotNull(runCatching { src.frame(stillMs, 480) }.getOrNull())
             } else {
                 val n = (lenMs / 100L).toInt().coerceIn(1, 60)
-                (0 until n).mapNotNull { source.frame(startMs + it * lenMs / n, 480) }
+                (0 until n).mapNotNull { runCatching { src.frame(startMs + it * lenMs / n, 480) }.getOrNull() }
             }
         }
     }
-
-    val pw = 480
-    val ph = (pw / style.ratio).toInt() and 1.inv()
-    val overlay = remember(style, content) { CardRender.overlay(style, content, pw, ph) }
-    LaunchedEffect(previewRaw, overlay) {
-        if (previewRaw.isEmpty()) {
-            shown = withContext(Dispatchers.Default) { CardRender.frame(style, null, overlay, pw, ph) }
-            return@LaunchedEffect
-        }
-        var i = 0
-        while (isActive) {
-            val raw = previewRaw[i % previewRaw.size]
-            shown = withContext(Dispatchers.Default) { CardRender.frame(style, raw, overlay, pw, ph) }
-            if (previewRaw.size == 1) break
+    LaunchedEffect(previewRaw) {
+        tick = 0
+        while (isActive && previewRaw.size > 1) {
             delay(100)
-            i++
+            tick++
         }
     }
+
+    val pager = rememberPagerState(pageCount = { CardPresets.size })
+    // a swipe that comes to rest picks that look and the sliders start from it again
+    LaunchedEffect(pager) {
+        snapshotFlow { pager.settledPage }.collect { style = CardPresets[it].copy(ratio = style.ratio) }
+    }
+    val pw = 480
 
     fun run(share: Boolean) {
         if (progress != null) return
@@ -838,7 +1083,7 @@ internal fun LyricCardEditor(song: MediaMetadata, lines: List<String>, onDismiss
             hint = null
             val result = runCatching {
                 withContext(Dispatchers.Default) {
-                    CardExport.render(context, style, content, bg, useStill, stillMs, startMs, lenMs, effKind, fps, exportWidth) { progress = it }
+                    CardExport.render(context, style, content, if (flat) null else bg, useStill, stillMs, startMs, lenMs, effKind, fps, exportWidth) { progress = it }
                 }
             }
             progress = null
@@ -849,133 +1094,229 @@ internal fun LyricCardEditor(song: MediaMetadata, lines: List<String>, onDismiss
         }
     }
 
+    val strip = remember(found.size, colours) {
+        (listOf<Backdrop>(Backdrop.Cover) + found.sortedBy { it.rank() } + colours.map { Backdrop.Colour(it, "Colour") }).distinctBy { it.id }
+    }
+    val previewH = (LocalConfiguration.current.screenHeightDp * 0.42f).dp
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
         Column(Modifier.fillMaxSize().background(Color(0xFF0B0B0C)).statusBarsPadding().navigationBarsPadding()) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                InfoPill(text = "Close", filled = false, onClick = onDismiss)
-                Spacer(Modifier.weight(1f))
-                Text("Lyric card", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                Spacer(Modifier.width(56.dp))
-            }
-
-            // the preview
-            val screenH = LocalConfiguration.current.screenHeightDp.dp
-            BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp), contentAlignment = Alignment.Center) {
-                val wDp = minOf(maxWidth, screenH * 0.40f * style.ratio)
-                val frame = Modifier.width(wDp).aspectRatio(style.ratio).clip(RoundedCornerShape(16.dp))
-                val bmp = shown
-                if (bmp != null) {
-                    Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = frame)
-                } else {
-                    Box(frame.background(MenuRowSurface))
+            // top bar like the edit player
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 22.dp)) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .clickable(onClick = onDismiss),
+                ) {
+                    Icon(painterResource(R.drawable.arrow_back_ios), contentDescription = "Back", tint = Color.White, modifier = Modifier.size(16.dp).offset(x = 2.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text("Lyric card", color = Color.White, style = inter(16.sp, FontWeight.Bold))
+                    Text("Swipe the styles, pick a background", color = Color.White.copy(alpha = 0.6f), style = inter(11.sp, FontWeight.Medium))
                 }
             }
 
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-                Text("The preview is lower quality and about 10 fps. The export is full quality.", color = InfoMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
-
-                CardLabel("Presets")
-                ChipRow {
-                    CardPresets.forEach { p -> InfoPill(text = p.name, filled = style.name == p.name, onClick = { style = p.copy(ratio = style.ratio) }) }
-                }
-
-                CardLabel("Background")
-                ChipRow {
-                    InfoPill(text = "Cover", filled = picked == null, onClick = { picked = null; useStill = false; kind = 0 })
-                    InfoPill(text = if (picked == null) "Pick file" else "Another file", filled = picked != null, onClick = { picker.launch(arrayOf("image/*", "video/*")) })
-                }
-                Text("Image or gif or a video: spotify canvas or apple animated cover or a clip saved from anywhere", color = InfoMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
-                if (animated) {
-                    Spacer(Modifier.height(8.dp))
-                    ChipRow {
-                        InfoPill(text = "Moving", filled = !useStill, onClick = { useStill = false })
-                        InfoPill(text = "Still frame", filled = useStill, onClick = { useStill = true })
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                HorizontalPager(
+                    state = pager,
+                    contentPadding = PaddingValues(horizontal = 44.dp),
+                    pageSpacing = 12.dp,
+                    modifier = Modifier.fillMaxWidth().height(previewH),
+                ) { page ->
+                    val here = pager.settledPage == page
+                    val pageStyle = if (here) style else CardPresets[page].copy(ratio = style.ratio)
+                    val ph = (pw / pageStyle.ratio).toInt() and 1.inv()
+                    val ov = remember(pageStyle, content) { CardRender.overlay(pageStyle, content, pw, ph) }
+                    val pageFlat = pageStyle.theme != 0 || solid != null
+                    val raw = if (pageFlat || previewRaw.isEmpty()) null else previewRaw[(if (here) tick else 0) % previewRaw.size]
+                    val shown by produceState<Bitmap?>(null, ov, raw) {
+                        value = withContext(Dispatchers.Default) { CardRender.frame(pageStyle, raw, ov, pw, ph) }
                     }
-                    if (useStill) {
-                        CardSlider("Frame", stillFrac, 0f..1f, "${(stillFrac * dur / 1000f).let { String.format(Locale.US, "%.1f", it) }} s") { stillFrac = it }
-                    } else {
-                        CardSlider("Length", clipSeconds, 2f..10f, "${clipSeconds.roundToInt()} s") { clipSeconds = it }
-                        if (dur - lenMs > 500L) {
-                            CardSlider("Start", startFrac, 0f..1f, "${String.format(Locale.US, "%.1f", startMs / 1000f)} s") { startFrac = it }
+                    val away = abs((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
+                    BoxWithConstraints(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize().graphicsLayer {
+                            scaleX = 1f - 0.08f * away
+                            scaleY = 1f - 0.08f * away
+                            alpha = 1f - 0.45f * away
+                        },
+                    ) {
+                        val wDp = minOf(maxWidth, maxHeight * pageStyle.ratio)
+                        val frame = Modifier.width(wDp).aspectRatio(pageStyle.ratio).clip(RoundedCornerShape(16.dp))
+                        val bmp = shown
+                        if (bmp != null) Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = frame) else Box(frame.background(MenuRowSurface))
+                    }
+                }
+
+                // style number and name sliding like the edit players
+                AnimatedContent(
+                    targetState = pager.currentPage,
+                    transitionSpec = { (slideInVertically { it / 2 } + fadeIn()) togetherWith (slideOutVertically { -it / 2 } + fadeOut()) },
+                    label = "cardStyleName",
+                    modifier = Modifier.padding(start = 26.dp, end = 26.dp, top = 14.dp),
+                ) { index ->
+                    Column {
+                        Text("STYLE ${index + 1} OF ${CardPresets.size}", color = Color.White.copy(alpha = 0.6f), style = inter(10.sp, FontWeight.SemiBold))
+                        Text(CardPresets[index].name, color = Color.White, style = inter(20.sp, FontWeight.Bold))
+                    }
+                }
+
+                // backgrounds found inside the app they turn up one by one while the search runs
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 26.dp, end = 26.dp, top = 22.dp, bottom = 10.dp)) {
+                    Text("Background", color = Color.White, style = inter(14.sp, FontWeight.Bold))
+                    Spacer(Modifier.weight(1f))
+                    val status = when {
+                        preparing && picked is Backdrop.Motion -> "Preparing the loop"
+                        searching -> "Looking for more"
+                        else -> "${strip.size} options"
+                    }
+                    Text(status, color = InfoMuted, style = inter(11.sp, FontWeight.Medium))
+                }
+                LazyRow(contentPadding = PaddingValues(horizontal = 26.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(strip, key = { it.id }) { item ->
+                        BackdropTile(item, selected = item.id == picked.id, coverUrl = song.thumbnailUrl?.resize(300, 300), onClick = { picked = item })
+                    }
+                }
+                if (style.theme != 0) {
+                    Text("This style paints its own background", color = InfoMuted, style = inter(12.sp, FontWeight.Medium), modifier = Modifier.padding(start = 26.dp, top = 10.dp))
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .padding(horizontal = 26.dp, vertical = 18.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .clickable { more = !more }
+                        .padding(horizontal = 18.dp, vertical = 13.dp),
+                ) {
+                    Box(Modifier.size(24.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.88f)), contentAlignment = Alignment.Center) {
+                        Icon(painterResource(R.drawable.tune), null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Text(if (more) "Fewer options" else "More options", color = Color.White, style = inter(14.sp, FontWeight.SemiBold))
+                }
+
+                if (more) {
+                    Column(Modifier.padding(horizontal = 26.dp)) {
+                        if (animated) {
+                            CardLabel("Motion")
+                            ChipRow {
+                                InfoPill(text = "Moving", filled = !useStill, onClick = { useStill = false })
+                                InfoPill(text = "Still frame", filled = useStill, onClick = { useStill = true })
+                            }
+                            if (useStill) {
+                                CardSlider("Frame", stillFrac, 0f..1f, "${String.format(Locale.US, "%.1f", stillFrac * dur / 1000f)} s") { stillFrac = it }
+                            } else {
+                                CardSlider("Length", clipSeconds, 2f..10f, "${clipSeconds.roundToInt()} s") { clipSeconds = it }
+                                if (dur - lenMs > 500L) {
+                                    CardSlider("Start", startFrac, 0f..1f, "${String.format(Locale.US, "%.1f", startMs / 1000f)} s") { startFrac = it }
+                                }
+                            }
                         }
-                    }
-                }
 
-                CardLabel("Look")
-                CardSlider("Blur", style.blur, 0f..1f, "${(style.blur * 100).toInt()}") { style = style.copy(blur = it) }
-                CardSlider("Dim", style.dim, 0f..0.9f, "${(style.dim * 100).toInt()}") { style = style.copy(dim = it) }
-                CardSlider("Colour", style.saturation, 0f..2f, "${(style.saturation * 100).toInt()}") { style = style.copy(saturation = it) }
-                CardSlider("Zoom", style.zoom, 1f..2f, "${String.format(Locale.US, "%.2f", style.zoom)}x") { style = style.copy(zoom = it) }
-                CardSlider("Vignette", style.vignette, 0f..1f, "${(style.vignette * 100).toInt()}") { style = style.copy(vignette = it) }
-                CardSlider("Bottom shade", style.scrim, 0f..1f, "${(style.scrim * 100).toInt()}") { style = style.copy(scrim = it) }
+                        CardLabel("Look")
+                        CardSlider("Blur", style.blur, 0f..1f, "${(style.blur * 100).toInt()}") { style = style.copy(blur = it) }
+                        CardSlider("Dim", style.dim, 0f..0.9f, "${(style.dim * 100).toInt()}") { style = style.copy(dim = it) }
+                        CardSlider("Colour", style.saturation, 0f..2f, "${(style.saturation * 100).toInt()}") { style = style.copy(saturation = it) }
+                        CardSlider("Zoom", style.zoom, 1f..2f, "${String.format(Locale.US, "%.2f", style.zoom)}x") { style = style.copy(zoom = it) }
+                        CardSlider("Vignette", style.vignette, 0f..1f, "${(style.vignette * 100).toInt()}") { style = style.copy(vignette = it) }
+                        CardSlider("Bottom shade", style.scrim, 0f..1f, "${(style.scrim * 100).toInt()}") { style = style.copy(scrim = it) }
 
-                CardLabel("Text")
-                ChipRow {
-                    InfoPill(text = "Left", filled = !style.center, onClick = { style = style.copy(center = false) })
-                    InfoPill(text = "Center", filled = style.center, onClick = { style = style.copy(center = true) })
-                    InfoPill(text = "Top", filled = style.vAlign == 0, onClick = { style = style.copy(vAlign = 0) })
-                    InfoPill(text = "Middle", filled = style.vAlign == 1, onClick = { style = style.copy(vAlign = 1) })
-                    InfoPill(text = "Bottom", filled = style.vAlign == 2, onClick = { style = style.copy(vAlign = 2) })
-                }
-                ChipRow {
-                    InfoPill(text = "Sans", filled = style.font == 0, onClick = { style = style.copy(font = 0) })
-                    InfoPill(text = "Serif", filled = style.font == 1, onClick = { style = style.copy(font = 1) })
-                    InfoPill(text = "Mono", filled = style.font == 2, onClick = { style = style.copy(font = 2) })
-                }
-                CardSlider("Size", style.textScale, 0.5f..1.6f, "${(style.textScale * 100).toInt()}") { style = style.copy(textScale = it) }
-                ChipRow {
-                    InfoPill(text = "Marker", filled = style.marker, onClick = { style = style.copy(marker = !style.marker) })
-                    InfoPill(text = "Glass", filled = style.panel, onClick = { style = style.copy(panel = !style.panel) })
-                    InfoPill(text = "Cover card", filled = style.coverCard, onClick = { style = style.copy(coverCard = !style.coverCard) })
-                    InfoPill(text = "Footer", filled = style.footer, onClick = { style = style.copy(footer = !style.footer) })
-                    InfoPill(text = "Mochy tag", filled = style.watermark, onClick = { style = style.copy(watermark = !style.watermark) })
-                }
-
-                CardLabel("Shape")
-                ChipRow {
-                    listOf("1:1" to 1f, "4:5" to 0.8f, "9:16" to 0.5625f).forEach { (name, r) ->
-                        InfoPill(text = name, filled = style.ratio == r, onClick = { style = style.copy(ratio = r) })
-                    }
-                }
-
-                CardLabel("Export")
-                if (animated && !useStill) {
-                    ChipRow {
-                        InfoPill(text = "GIF", filled = kind == 1, onClick = { kind = 1 })
-                        InfoPill(text = "MP4", filled = kind == 2, onClick = { kind = 2 })
-                        InfoPill(text = "PNG still", filled = kind == 0, onClick = { kind = 0 })
-                    }
-                    if (effKind != 0) {
+                        CardLabel("Cover")
                         ChipRow {
-                            listOf(25, 30, 50, 60).forEach { v -> InfoPill(text = "$v fps", filled = fps == v, onClick = { fps = v }) }
+                            listOf("None", "Card", "Vinyl", "Header").forEachIndexed { i, name ->
+                                InfoPill(text = name, filled = style.coverMode == i, onClick = { style = style.copy(coverMode = i) })
+                            }
+                        }
+
+                        CardLabel("Text")
+                        ChipRow {
+                            InfoPill(text = "Left", filled = !style.center, onClick = { style = style.copy(center = false) })
+                            InfoPill(text = "Center", filled = style.center, onClick = { style = style.copy(center = true) })
+                            InfoPill(text = "Top", filled = style.vAlign == 0, onClick = { style = style.copy(vAlign = 0) })
+                            InfoPill(text = "Middle", filled = style.vAlign == 1, onClick = { style = style.copy(vAlign = 1) })
+                            InfoPill(text = "Bottom", filled = style.vAlign == 2, onClick = { style = style.copy(vAlign = 2) })
+                        }
+                        ChipRow {
+                            listOf("Sans", "Serif", "Mono", "Condensed").forEachIndexed { i, name ->
+                                InfoPill(text = name, filled = style.font == i, onClick = { style = style.copy(font = i) })
+                            }
+                        }
+                        CardSlider("Size", style.textScale, 0.5f..1.6f, "${(style.textScale * 100).toInt()}") { style = style.copy(textScale = it) }
+                        ChipRow {
+                            InfoPill(text = "Marker", filled = style.marker, onClick = { style = style.copy(marker = !style.marker) })
+                            InfoPill(text = "Glow", filled = style.glow, onClick = { style = style.copy(glow = !style.glow) })
+                            InfoPill(text = "Caps", filled = style.upper, onClick = { style = style.copy(upper = !style.upper) })
+                            InfoPill(text = "Quote mark", filled = style.quote, onClick = { style = style.copy(quote = !style.quote) })
+                            InfoPill(text = "Glass", filled = style.panel, onClick = { style = style.copy(panel = !style.panel) })
+                        }
+                        if (style.marker) {
+                            ChipRow {
+                                listOf("White marker", "Accent marker", "Yellow marker").forEachIndexed { i, name ->
+                                    InfoPill(text = name, filled = style.markerColor == i, onClick = { style = style.copy(markerColor = i) })
+                                }
+                            }
+                        }
+                        ChipRow {
+                            InfoPill(text = "Footer", filled = style.footer, onClick = { style = style.copy(footer = !style.footer) })
+                            InfoPill(text = "Mochy tag", filled = style.watermark, onClick = { style = style.copy(watermark = !style.watermark) })
+                        }
+
+                        CardLabel("Shape")
+                        ChipRow {
+                            listOf("1:1" to 1f, "4:5" to 0.8f, "9:16" to 0.5625f).forEach { (name, r) ->
+                                InfoPill(text = name, filled = style.ratio == r, onClick = { style = style.copy(ratio = r) })
+                            }
+                        }
+
+                        CardLabel("Export")
+                        if (animated && !useStill) {
+                            ChipRow {
+                                InfoPill(text = "MP4", filled = kind == 2, onClick = { kind = 2 })
+                                InfoPill(text = "GIF", filled = kind == 1, onClick = { kind = 1 })
+                                InfoPill(text = "PNG still", filled = kind == 0, onClick = { kind = 0 })
+                            }
+                            if (effKind != 0) {
+                                ChipRow {
+                                    listOf(25, 30, 50, 60).forEach { v -> InfoPill(text = "$v fps", filled = fps == v, onClick = { fps = v }) }
+                                }
+                            }
+                        } else {
+                            Text("PNG", color = Color.White, style = inter(14.sp, FontWeight.Medium))
+                        }
+                        ChipRow {
+                            listOf(540, 720, 1080).forEach { v -> InfoPill(text = "${v}px", filled = exportWidth == v, onClick = { exportWidth = v }) }
+                        }
+                        if (effKind == 1) {
+                            Text("A gif has 256 colours and gets big at 50 fps. MP4 is smaller and much sharper.", color = InfoMuted, style = inter(12.sp, FontWeight.Medium), modifier = Modifier.padding(top = 4.dp))
+                        }
+                        ChipRow {
+                            InfoPill(text = "Copy settings", filled = false, onClick = {
+                                runCatching {
+                                    val text = style.describe() + " backdrop=${picked.id} export=${listOf("png", "gif", "mp4")[effKind]} fps=$fps width=$exportWidth clip=${clipSeconds.roundToInt()}s"
+                                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("card", text))
+                                    hint = "Settings copied"
+                                }
+                            })
                         }
                     }
-                } else {
-                    Text("PNG", color = Color.White, fontSize = 14.sp)
                 }
-                ChipRow {
-                    listOf(540, 720, 1080).forEach { v -> InfoPill(text = "${v}px", filled = exportWidth == v, onClick = { exportWidth = v }) }
-                }
-                if (effKind == 1) {
-                    Text("A gif has 256 colours and gets big at 50 fps. MP4 is smaller and much sharper.", color = InfoMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
-                }
+                Spacer(Modifier.height(24.dp))
+            }
 
-                Spacer(Modifier.height(16.dp))
-                ChipRow {
-                    InfoPill(text = "Save", filled = true, onClick = { run(false) })
-                    InfoPill(text = "Share", filled = false, onClick = { run(true) })
-                    InfoPill(text = "Copy settings", filled = false, onClick = {
-                        runCatching {
-                            val text = style.describe() + " export=${listOf("png", "gif", "mp4")[effKind]} fps=$fps width=$exportWidth clip=${clipSeconds.roundToInt()}s"
-                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("card", text))
-                            hint = "Settings copied"
-                        }
-                    })
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
+                val note = progress?.let { "Rendering ${(it * 100).toInt()}%" } ?: hint
+                if (note != null) Text(note, color = Color.White.copy(alpha = 0.75f), style = inter(12.sp, FontWeight.Medium), modifier = Modifier.padding(bottom = 8.dp, start = 6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ActionButton("Save", R.drawable.download, filled = true, enabled = progress == null, modifier = Modifier.weight(1f)) { run(false) }
+                    ActionButton("Share", R.drawable.share, filled = false, enabled = progress == null, modifier = Modifier.weight(1f)) { run(true) }
                 }
-                progress?.let { Text("Rendering ${(it * 100).toInt()}%", color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp)) }
-                hint?.let { Text(it, color = InfoMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp)) }
-                Spacer(Modifier.height(40.dp))
             }
         }
     }
